@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">Iris</string>
+    <string name="instruction">Please put the smartphone into a horizontal position and click Start.</string>
+    <string name="start_recognition">Start</string>
+
+    <string name="title_activity_recognition">RecognitionActivity</string>
+    <string name="dummy_button">Dummy Button</string>
+    <string name="dummy_content">DUMMY\nCONTENT</string>
+</resources>
