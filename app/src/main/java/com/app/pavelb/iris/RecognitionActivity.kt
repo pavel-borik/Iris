@@ -16,13 +16,13 @@ import org.opencv.core.*
 
 class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
 
-    private var mIsColorSelected = false
-    private var mRgba: Mat? = null
-    private var mBlobColorRgba: Scalar? = null
-    private var mBlobColorHsv: Scalar? = null
-    private var mSpectrum: Mat? = null
-    private var SPECTRUM_SIZE: Size? = null
-    private var CONTOUR_COLOR: Scalar? = null
+    private var cameraFrameRgba: Mat? = null
+    private var cameraFrameHls: Mat? = null
+    private var cameraFrameResult: Mat? = null
+    private var frameMaskWhite: Mat? = null
+    private var frameMaskYellow: Mat? = null
+    private var frameMaskTotal: Mat? = null
+    private var combinedImage: Mat? = null
 
     private var mOpenCvCameraView: CameraBridgeViewBase? = null
 
@@ -51,11 +51,19 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
         super.onCreate(savedInstanceState)
         requestWindowFeature(Window.FEATURE_NO_TITLE)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-
         setContentView(R.layout.activity_recognition)
 
         mOpenCvCameraView = findViewById(R.id.cameraSurfaceView)
         mOpenCvCameraView!!.visibility = SurfaceView.VISIBLE
+
+        mOpenCvCameraView!!.systemUiVisibility =
+                View.SYSTEM_UI_FLAG_LOW_PROFILE or
+                View.SYSTEM_UI_FLAG_FULLSCREEN or
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+                View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
+                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+
         mOpenCvCameraView!!.setCvCameraViewListener(this)
     }
 
@@ -83,21 +91,22 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
     }
 
     override fun onCameraViewStarted(width: Int, height: Int) {
-        mRgba = Mat(height, width, CvType.CV_8UC4)
-        mSpectrum = Mat()
-        mBlobColorRgba = Scalar(255.0)
-        mBlobColorHsv = Scalar(255.0)
-        SPECTRUM_SIZE = Size(200.0, 64.0)
-        CONTOUR_COLOR = Scalar(255.0, 0.0, 0.0, 255.0)
+        cameraFrameRgba = Mat(height, width, CvType.CV_8UC4)
+        cameraFrameHls = Mat(height, width, CvType.CV_8UC4)
+        cameraFrameResult = Mat(height, width, CvType.CV_8UC4)
+        frameMaskWhite = Mat(height, width, CvType.CV_8UC1 )
+        frameMaskYellow = Mat(height, width, CvType.CV_8UC1 )
+        frameMaskTotal = Mat(height, width, CvType.CV_8UC1 )
+        combinedImage = Mat(height, width, CvType.CV_8UC3 )
     }
 
     override fun onCameraViewStopped() {
-        mRgba!!.release()
+        cameraFrameRgba!!.release()
     }
 
     override fun onTouch(v: View, event: MotionEvent): Boolean {
-        val cols = mRgba!!.cols()
-        val rows = mRgba!!.rows()
+        val cols = cameraFrameRgba!!.cols()
+        val rows = cameraFrameRgba!!.rows()
 
         val xOffset = (mOpenCvCameraView!!.width - cols) / 2
         val yOffset = (mOpenCvCameraView!!.height - rows) / 2
@@ -111,9 +120,25 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
     }
 
     override fun onCameraFrame(inputFrame: CvCameraViewFrame): Mat? {
-        mRgba = inputFrame.rgba()
+        cameraFrameRgba = inputFrame.rgba()
+        Imgproc.cvtColor(cameraFrameRgba, cameraFrameHls , Imgproc.COLOR_RGB2HLS, 3)
 
-        return mRgba
+
+
+        Core.inRange(cameraFrameHls, Scalar(0.0, 0.0, 0.0), Scalar(180.0, 255.0, 255.0), frameMaskWhite)
+        Core.inRange(cameraFrameHls, Scalar(15.0, 38.0, 115.0), Scalar(35.0, 204.0, 255.0), frameMaskYellow)
+
+        Core.bitwise_or(frameMaskWhite, frameMaskYellow, frameMaskTotal)
+
+        combinedImage!!.release()
+        Core.bitwise_and(cameraFrameRgba, cameraFrameRgba, combinedImage, frameMaskTotal)
+
+        Imgproc.cvtColor(combinedImage, cameraFrameResult, Imgproc.COLOR_RGB2GRAY, 4)
+        Imgproc.GaussianBlur(cameraFrameResult, cameraFrameResult, Size(5.0,5.0), 0.0, 0.0)
+        Imgproc.Canny(cameraFrameResult, cameraFrameResult, 50.0, 150.0 )
+
+
+        return cameraFrameResult
     }
 
     private fun converScalarHsv2Rgba(hsvColor: Scalar?): Scalar {

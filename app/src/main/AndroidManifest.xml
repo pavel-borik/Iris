@@ -1,12 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-          xmlns:tools="http://schemas.android.com/tools" package="com.app.pavelb.iris">
+          xmlns:tools="http://schemas.android.com/tools"
+          package="com.app.pavelb.iris">
 
-    <uses-permission android:name="android.permission.CAMERA" />
-    <uses-feature android:name="android.hardware.camera" android:required="false"/>
-    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false"/>
-    <uses-feature android:name="android.hardware.camera.front" android:required="false"/>
-    <uses-feature android:name="android.hardware.camera.front.autofocus" android:required="false"/>
+    <uses-permission android:name="android.permission.CAMERA"/>
+
+    <uses-feature
+            android:name="android.hardware.camera"
+            android:required="false"/>
+    <uses-feature
+            android:name="android.hardware.camera.autofocus"
+            android:required="false"/>
+    <uses-feature
+            android:name="android.hardware.camera.front"
+            android:required="false"/>
+    <uses-feature
+            android:name="android.hardware.camera.front.autofocus"
+            android:required="false"/>
 
     <application
             android:allowBackup="true"
@@ -14,7 +24,8 @@
             android:label="@string/app_name"
             android:roundIcon="@mipmap/ic_launcher_round"
             android:supportsRtl="true"
-            android:theme="@style/AppTheme" tools:ignore="GoogleAppIndexingWarning">
+            android:theme="@style/AppTheme"
+            tools:ignore="GoogleAppIndexingWarning">
         <activity android:name=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -27,6 +38,12 @@
                 android:configChanges="orientation|keyboardHidden|screenSize"
                 android:label="@string/title_activity_recognition"
                 android:screenOrientation="landscape"
+                android:theme="@style/FullscreenTheme">
+        </activity>
+        <activity
+                android:name=".FullscreenActivity"
+                android:configChanges="orientation|keyboardHidden|screenSize"
+                android:label="@string/title_activity_fullscreen"
                 android:theme="@style/FullscreenTheme">
         </activity>
     </application>
