@@ -12,26 +12,33 @@ import android.view.View.OnTouchListener
 import android.app.Activity
 import android.util.Log
 import android.view.*
+import com.app.pavelb.iris.utils.Line
+import org.apache.commons.math3.fitting.PolynomialCurveFitter
+import org.apache.commons.math3.stat.regression.SimpleRegression
 import org.opencv.core.*
 import org.opencv.utils.Converters
+import java.util.*
 
 class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
-
+    private val imageWidth: Int = 1280
+    private val imageHeight: Int = 720
     private var previewSize: Size? = null
-
+    private var roiPolygon: MatOfPoint? = null
     private var cameraFrameRgba: Mat? = null
     private var cameraFrameHls: Mat? = null
-    private var cameraFrameResult: Mat? = null
+    private var cameraFrameGrayScale: Mat? = null
     private var frameMaskWhite: Mat? = null
     private var frameMaskYellow: Mat? = null
     private var frameMaskTotal: Mat? = null
-    private var combinedImage: Mat? = null
+    private var cameraFrameWhiteYellowMasked: Mat? = null
     private var perspTransformMat: Mat? = null
-
     private var srcPersp: Mat? = null
     private var dstPersp: Mat? = null
-
     private var mOpenCvCameraView: CameraBridgeViewBase? = null
+    private val allLines: MutableList<Line> = LinkedList()
+    private val leftLines: MutableList<Line> = LinkedList()
+    private val rightLines: MutableList<Line> = LinkedList()
+
 
     private val mLoaderCallback = object : BaseLoaderCallback(this) {
         override fun onManagerConnected(status: Int) {
@@ -40,7 +47,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
                     Log.i(TAG, "OpenCV loaded successfully")
                     mOpenCvCameraView!!.enableView()
                     mOpenCvCameraView!!.setOnTouchListener(this@RecognitionActivity)
-                    mOpenCvCameraView!!.setMaxFrameSize(1280, 720)
+                    mOpenCvCameraView!!.setMaxFrameSize(imageWidth, imageHeight)
                 }
                 else -> {
                     super.onManagerConnected(status)
@@ -99,15 +106,17 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
     }
 
     override fun onCameraViewStarted(width: Int, height: Int) {
-        previewSize = Size(1280.0, 720.0)
+        previewSize = Size(imageWidth.toDouble(), imageHeight.toDouble())
         cameraFrameRgba = Mat(height, width, CvType.CV_8UC4)
         cameraFrameHls = Mat(height, width, CvType.CV_8UC4)
-        cameraFrameResult = Mat(height, width, CvType.CV_8UC4)
+        cameraFrameGrayScale = Mat(height, width, CvType.CV_8UC4)
         frameMaskWhite = Mat(height, width, CvType.CV_8UC1)
         frameMaskYellow = Mat(height, width, CvType.CV_8UC1)
         frameMaskTotal = Mat(height, width, CvType.CV_8UC1)
-        combinedImage = Mat(height, width, CvType.CV_8UC3)
+        cameraFrameWhiteYellowMasked = Mat(height, width, CvType.CV_8UC3)
         perspTransformMat = Mat()
+        roiPolygon = MatOfPoint(Point(190.0, 720.0), Point(582.0, 457.0), Point(701.0, 457.0), Point(1145.0, 720.0))
+
         srcPersp = Converters.vector_Point2f_to_Mat(
             listOf(
                 Point(190.0, 720.0),
@@ -148,59 +157,111 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
     override fun onCameraFrame(inputFrame: CvCameraViewFrame): Mat? {
         cameraFrameRgba = inputFrame.rgba()
 
-        val r = createPipelineSimple(cameraFrameRgba)
-        //val r = createPipelineAdvanced(cameraFrameRgba)
+        val r = createSimplePipeline(cameraFrameRgba)
+        //val r = createAdvancedPipeline(cameraFrameRgba)
 
         return r
     }
 
-    private fun createPipelineSimple(cameraFrameRgba: Mat?): Mat {
+    private fun createSimplePipeline(cameraFrameRgba: Mat?): Mat {
         Imgproc.cvtColor(cameraFrameRgba, cameraFrameHls, Imgproc.COLOR_RGB2HLS, 3)
 
-        Core.inRange(cameraFrameHls, Scalar(0.0, 0.0, 0.0), Scalar(180.0, 255.0, 255.0), frameMaskWhite)
+        Core.inRange(cameraFrameHls, Scalar(0.0, 200.0, 0.0), Scalar(180.0, 255.0, 255.0), frameMaskWhite)
         Core.inRange(cameraFrameHls, Scalar(15.0, 38.0, 115.0), Scalar(35.0, 204.0, 255.0), frameMaskYellow)
         Core.bitwise_or(frameMaskWhite, frameMaskYellow, frameMaskTotal)
-        combinedImage!!.release()
-        Core.bitwise_and(cameraFrameRgba, cameraFrameRgba, combinedImage, frameMaskTotal)
+        cameraFrameWhiteYellowMasked!!.release()
+        Core.bitwise_and(cameraFrameRgba, cameraFrameRgba, cameraFrameWhiteYellowMasked, frameMaskTotal)
 
-        Imgproc.cvtColor(combinedImage, cameraFrameResult, Imgproc.COLOR_RGB2GRAY, 4)
-        Imgproc.GaussianBlur(cameraFrameResult, cameraFrameResult, Size(5.0, 5.0), 0.0, 0.0)
-        Imgproc.Canny(cameraFrameResult, cameraFrameResult, 50.0, 150.0)
+        Imgproc.cvtColor(cameraFrameWhiteYellowMasked, cameraFrameGrayScale, Imgproc.COLOR_RGB2GRAY, 4)
+        Imgproc.GaussianBlur(cameraFrameGrayScale, cameraFrameGrayScale, Size(5.0, 5.0), 0.0, 0.0)
+        Imgproc.Canny(cameraFrameGrayScale, cameraFrameGrayScale, 50.0, 150.0)
 
-        val roi = Mat.zeros(720, 1280, CvType.CV_8UC1)
+        val roi = Mat.zeros(imageHeight, imageWidth, CvType.CV_8UC1)
         Imgproc.fillPoly(
             roi,
-            listOf(MatOfPoint(Point(190.0, 720.0), Point(582.0, 457.0), Point(701.0, 457.0), Point(1145.0, 720.0))),
+            listOf(roiPolygon),
             Scalar(255.0)
         )
-        val result = Mat.zeros(720, 1280, CvType.CV_8UC4)
-        Core.bitwise_and(cameraFrameResult, cameraFrameResult, result, roi)
+        showRoi(cameraFrameRgba)
+
+        val processedFrameCroppedIntoRoi = Mat.zeros(720, 1280, CvType.CV_8UC4)
+        Core.bitwise_and(cameraFrameGrayScale, cameraFrameGrayScale, processedFrameCroppedIntoRoi, roi)
 
         val linesP = Mat()
-        Imgproc.HoughLinesP(result, linesP, 1.0, Math.PI / 180, 15, 20.0, 10.0)
+        Imgproc.HoughLinesP(processedFrameCroppedIntoRoi, linesP, 1.0, Math.PI / 180, 15, 10.0, 10.0)
 
-        var points: DoubleArray?
+        var lineCoords: DoubleArray?
+        allLines.clear()
         for (i in 0..linesP.rows()) {
-            points = linesP.get(i, 0)
-            if (points != null) {
-                Imgproc.line(
-                    cameraFrameRgba,
-                    Point(points[0], points[1]),
-                    Point(points[2], points[3]),
-                    Scalar(0.0, 0.0, 255.0),
-                    3,
-                    Imgproc.LINE_AA
-                )
+            lineCoords = linesP.get(i, 0)
+            if (lineCoords != null) {
+                allLines.add(Line(lineCoords[0], lineCoords[1], lineCoords[2], lineCoords[3]))
             }
         }
 
+        separateLines(allLines)
+
+        leftLines.forEach {
+            Imgproc.line(
+                cameraFrameRgba,
+                Point(it.xStart, it.yStart),
+                Point(it.xEnd, it.yEnd),
+                Scalar(0.0, 0.0, 255.0),
+                3,
+                Imgproc.LINE_AA
+            )
+        }
+        rightLines.forEach {
+            Imgproc.line(
+                cameraFrameRgba,
+                Point(it.xStart, it.yStart),
+                Point(it.xEnd, it.yEnd),
+                Scalar(255.0, 0.0, 0.0),
+                3,
+                Imgproc.LINE_AA
+            )
+        }
+
+        Imgproc.putText(
+            cameraFrameRgba,
+            "l: ${leftLines.size}, r: ${rightLines.size}",
+            Point(50.0, 50.0),
+            Core.FONT_HERSHEY_COMPLEX,
+            1.0,
+            Scalar(255.0, 0.0, 0.0)
+        )
+
         roi.release()
-        result.release()
+        processedFrameCroppedIntoRoi.release()
         linesP.release()
         return cameraFrameRgba!!
     }
 
-    private fun createPipelineAdvanced(cameraFrameRgba: Mat?): Mat {
+    private fun showRoi(cameraFrameRgba: Mat?) {
+        Imgproc.polylines(
+            cameraFrameRgba, listOf(roiPolygon), false, Scalar(0.0, 255.0, 0.0),
+            1, Imgproc.LINE_AA
+        )
+    }
+
+    private fun separateLines(allLines: MutableList<Line>) {
+        leftLines.clear()
+        rightLines.clear()
+        var slope: Double?
+        val imageMidpoint = imageWidth / 2
+        allLines.forEach {
+            slope = it.getSlope()
+            if (slope != null) {
+                if (slope!! > 0.0 && it.xStart < imageMidpoint && it.xEnd < imageMidpoint) {
+                    leftLines.add(it)
+                } else if (slope!! < 0.0 && it.xStart > imageMidpoint && it.xEnd > imageMidpoint) {
+                    rightLines.add(it)
+                }
+            }
+        }
+    }
+
+    private fun createAdvancedPipeline(cameraFrameRgba: Mat?): Mat {
         Imgproc.cvtColor(cameraFrameRgba, cameraFrameHls, Imgproc.COLOR_RGB2HLS, 3)
 
         Core.inRange(cameraFrameHls, Scalar(0.0, 200.0, 0.0), Scalar(180.0, 255.0, 255.0), frameMaskWhite)
@@ -208,16 +269,22 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
 
         Core.bitwise_or(frameMaskWhite, frameMaskYellow, frameMaskTotal)
 
-        combinedImage!!.release()
-        Core.bitwise_and(cameraFrameRgba, cameraFrameRgba, combinedImage, frameMaskTotal)
+        cameraFrameWhiteYellowMasked!!.release()
+        Core.bitwise_and(cameraFrameRgba, cameraFrameRgba, cameraFrameWhiteYellowMasked, frameMaskTotal)
 
         perspTransformMat = Imgproc.getPerspectiveTransform(srcPersp, dstPersp)
-        Imgproc.warpPerspective(combinedImage, combinedImage, perspTransformMat, previewSize, Imgproc.INTER_LINEAR)
+        Imgproc.warpPerspective(
+            cameraFrameWhiteYellowMasked,
+            cameraFrameWhiteYellowMasked,
+            perspTransformMat,
+            previewSize,
+            Imgproc.INTER_LINEAR
+        )
 
-        val hist = computeHistogram(combinedImage!!)
+        val hist = computeHistogram(cameraFrameWhiteYellowMasked!!)
         writeHistInfo(hist)
 
-        return combinedImage!!
+        return cameraFrameWhiteYellowMasked!!
     }
 
     private fun writeHistInfo(hist: IntArray) {
@@ -230,7 +297,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
             }
         }
         Imgproc.putText(
-            combinedImage,
+            cameraFrameWhiteYellowMasked,
             "Hist max at $id is $v",
             Point(50.0, 50.0),
             Core.FONT_HERSHEY_COMPLEX,
