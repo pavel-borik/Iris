@@ -13,7 +13,6 @@ import android.app.Activity
 import android.util.Log
 import android.view.*
 import com.app.pavelb.iris.utils.Line
-import org.apache.commons.math3.fitting.PolynomialCurveFitter
 import org.apache.commons.math3.stat.regression.SimpleRegression
 import org.opencv.core.*
 import org.opencv.utils.Converters
@@ -39,6 +38,9 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
     private val leftLines: MutableList<Line> = LinkedList()
     private val rightLines: MutableList<Line> = LinkedList()
 
+    private var regression: SimpleRegression? = null
+    private val leftCoefs: Deque<Pair<Double, Double>> = ArrayDeque(10)
+    private val rightCoefs: Deque<Pair<Double, Double>> = ArrayDeque(10)
 
     private val mLoaderCallback = object : BaseLoaderCallback(this) {
         override fun onManagerConnected(status: Int) {
@@ -116,6 +118,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
         cameraFrameWhiteYellowMasked = Mat(height, width, CvType.CV_8UC3)
         perspTransformMat = Mat()
         roiPolygon = MatOfPoint(Point(190.0, 720.0), Point(582.0, 457.0), Point(701.0, 457.0), Point(1145.0, 720.0))
+        regression = SimpleRegression(true)
 
         srcPersp = Converters.vector_Point2f_to_Mat(
             listOf(
@@ -188,7 +191,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
         Core.bitwise_and(cameraFrameGrayScale, cameraFrameGrayScale, processedFrameCroppedIntoRoi, roi)
 
         val linesP = Mat()
-        Imgproc.HoughLinesP(processedFrameCroppedIntoRoi, linesP, 1.0, Math.PI / 180, 15, 10.0, 10.0)
+        Imgproc.HoughLinesP(processedFrameCroppedIntoRoi, linesP, 1.0, Math.PI / 180, 15, 3.0, 50.0)
 
         var lineCoords: DoubleArray?
         allLines.clear()
@@ -200,6 +203,9 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
         }
 
         separateLines(allLines)
+
+        drawExtrapolatedLine(cameraFrameRgba, leftLines, true)
+        drawExtrapolatedLine(cameraFrameRgba, rightLines, false)
 
         leftLines.forEach {
             Imgproc.line(
@@ -216,7 +222,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
                 cameraFrameRgba,
                 Point(it.xStart, it.yStart),
                 Point(it.xEnd, it.yEnd),
-                Scalar(255.0, 0.0, 0.0),
+                Scalar(0.0, 255.0, 100.0),
                 3,
                 Imgproc.LINE_AA
             )
@@ -237,6 +243,50 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
         return cameraFrameRgba!!
     }
 
+    private fun drawExtrapolatedLine(cameraFrame: Mat?, lines: MutableList<Line>, drawOnTheLeft: Boolean) {
+        if (drawOnTheLeft) {
+            if (lines.size > 0) {
+                computeExtrapolationFormula(lines)
+                if (leftCoefs.size >= 10) leftCoefs.pollLast()
+                leftCoefs.offerFirst(Pair(regression!!.slope, regression!!.intercept))
+            } else {
+                leftCoefs.pollLast()
+            }
+        } else {
+            if (lines.size > 0) {
+                computeExtrapolationFormula(lines)
+                if (rightCoefs.size >= 10) rightCoefs.pollLast()
+                rightCoefs.offerFirst(Pair(regression!!.slope, regression!!.intercept))
+            } else {
+                rightCoefs.pollLast()
+            }
+        }
+        val imageMidpoint = imageWidth / 2
+        if (drawOnTheLeft) {
+            val avgSlope = leftCoefs.map { it.first }.sum() / leftCoefs.size
+            val avgIntercept = leftCoefs.map { it.second }.sum() / leftCoefs.size
+            Imgproc.line(
+                cameraFrame,
+                Point(190.0, avgSlope * 190.0 + avgIntercept),
+                Point(imageMidpoint - 1.0, avgSlope * imageMidpoint + avgIntercept),
+                Scalar(255.0, 0.0, 0.0),
+                3,
+                Imgproc.LINE_AA
+            )
+        } else {
+            val avgSlope = rightCoefs.map { it.first }.sum() / rightCoefs.size
+            val avgIntercept = rightCoefs.map { it.second }.sum() / rightCoefs.size
+            Imgproc.line(
+                cameraFrame,
+                Point(imageMidpoint + 1.0, avgSlope * (imageMidpoint + 1.0) + avgIntercept),
+                Point(1145.0, avgSlope * 1145.0 + avgIntercept),
+                Scalar(255.0, 0.0, 0.0),
+                3,
+                Imgproc.LINE_AA
+            )
+        }
+    }
+
     private fun showRoi(cameraFrameRgba: Mat?) {
         Imgproc.polylines(
             cameraFrameRgba, listOf(roiPolygon), false, Scalar(0.0, 255.0, 0.0),
@@ -252,11 +302,23 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
         allLines.forEach {
             slope = it.getSlope()
             if (slope != null) {
-                if (slope!! > 0.0 && it.xStart < imageMidpoint && it.xEnd < imageMidpoint) {
+                if (slope!! > 0.1 && it.xStart < imageMidpoint && it.xEnd < imageMidpoint) {
                     leftLines.add(it)
-                } else if (slope!! < 0.0 && it.xStart > imageMidpoint && it.xEnd > imageMidpoint) {
+                } else if (slope!! < 0.1 && it.xStart > imageMidpoint && it.xEnd > imageMidpoint) {
                     rightLines.add(it)
                 }
+            }
+        }
+    }
+
+    private fun computeExtrapolationFormula(lines: MutableList<Line>) {
+        regression!!.clear()
+        var slope: Double?
+        lines.forEach {
+            slope = it.getSlope()
+            if (slope != null) {
+                regression!!.addData(it.xStart, it.yStart)
+                regression!!.addData(it.xEnd, it.yEnd)
             }
         }
     }
