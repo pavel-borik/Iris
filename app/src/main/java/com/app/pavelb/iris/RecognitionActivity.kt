@@ -117,7 +117,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
         frameMaskTotal = Mat(height, width, CvType.CV_8UC1)
         cameraFrameWhiteYellowMasked = Mat(height, width, CvType.CV_8UC3)
         perspTransformMat = Mat()
-        roiPolygon = MatOfPoint(Point(190.0, 720.0), Point(582.0, 457.0), Point(701.0, 457.0), Point(1145.0, 720.0))
+        roiPolygon = MatOfPoint(Point(135.0, 720.0), Point(582.0, 457.0), Point(701.0, 457.0), Point(1145.0, 720.0))
         regression = SimpleRegression(true)
 
         srcPersp = Converters.vector_Point2f_to_Mat(
@@ -169,7 +169,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
     private fun createSimplePipeline(cameraFrameRgba: Mat?): Mat {
         Imgproc.cvtColor(cameraFrameRgba, cameraFrameHls, Imgproc.COLOR_RGB2HLS, 3)
 
-        Core.inRange(cameraFrameHls, Scalar(0.0, 200.0, 0.0), Scalar(180.0, 255.0, 255.0), frameMaskWhite)
+        Core.inRange(cameraFrameHls, Scalar(0.0, 190.0, 0.0), Scalar(180.0, 255.0, 255.0), frameMaskWhite)
         Core.inRange(cameraFrameHls, Scalar(15.0, 38.0, 115.0), Scalar(35.0, 204.0, 255.0), frameMaskYellow)
         Core.bitwise_or(frameMaskWhite, frameMaskYellow, frameMaskTotal)
         cameraFrameWhiteYellowMasked!!.release()
@@ -267,7 +267,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
             val avgIntercept = leftCoefs.map { it.second }.sum() / leftCoefs.size
             Imgproc.line(
                 cameraFrame,
-                Point(190.0, avgSlope * 190.0 + avgIntercept),
+                Point(roiPolygon!!.toArray()[0].x, avgSlope * 190.0 + avgIntercept),
                 Point(imageMidpoint - 1.0, avgSlope * imageMidpoint + avgIntercept),
                 Scalar(255.0, 0.0, 0.0),
                 3,
