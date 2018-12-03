@@ -20,6 +20,8 @@ import org.opencv.utils.Converters
 import java.util.*
 import org.apache.commons.math3.fitting.WeightedObservedPoints
 import org.apache.commons.math3.fitting.PolynomialCurveFitter
+import org.opencv.core.Mat
+import kotlin.math.max
 
 
 class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
@@ -39,15 +41,19 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
     private var srcPersp: Mat? = null
     private var dstPersp: Mat? = null
     private var mOpenCvCameraView: CameraBridgeViewBase? = null
-    private val allLines: MutableList<Line> = LinkedList()
-    private val leftLines: MutableList<Line> = LinkedList()
-    private val rightLines: MutableList<Line> = LinkedList()
 
-    private var regression: SimpleRegression? = null
+    private val allLines = LinkedList<Line>()
+    private val leftLines = LinkedList<Line>()
+    private val rightLines = LinkedList<Line>()
+
+    private val regression = SimpleRegression(true)
     private val polyFitter = PolynomialCurveFitter.create(2)
     private val obs = WeightedObservedPoints()
     private val leftCoefs: Deque<Pair<Double, Double>> = ArrayDeque(10)
     private val rightCoefs: Deque<Pair<Double, Double>> = ArrayDeque(10)
+
+    private var cameraMode = 3
+    private var extrapolationMode = 4
 
     private val mLoaderCallback = object : BaseLoaderCallback(this) {
         override fun onManagerConnected(status: Int) {
@@ -116,33 +122,32 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
 
     override fun onCameraViewStarted(width: Int, height: Int) {
         previewSize = Size(imageWidth.toDouble(), imageHeight.toDouble())
-        cameraFrameRgba = Mat(height, width, CvType.CV_8UC4)
-        cameraFrameHls = Mat(height, width, CvType.CV_8UC3)
-        cameraFrameCropped = Mat(height, width, CvType.CV_8UC3)
-        cameraFrameGrayScale = Mat(height, width, CvType.CV_8UC4)
-        frameMaskWhite = Mat(height, width, CvType.CV_8UC1)
-        frameMaskYellow = Mat(height, width, CvType.CV_8UC1)
-        frameMaskTotal = Mat(height, width, CvType.CV_8UC1)
-        cameraFrameWhiteYellowMasked = Mat(height, width, CvType.CV_8UC3)
+        cameraFrameRgba = Mat(height, width, CvType.CV_32FC3)
+        cameraFrameHls = Mat(height, width, CvType.CV_32FC3)
+        cameraFrameCropped = Mat(height, width, CvType.CV_32FC3)
+        cameraFrameGrayScale = Mat(height, width, CvType.CV_32FC3)
+        frameMaskWhite = Mat(height, width, CvType.CV_32FC1)
+        frameMaskYellow = Mat(height, width, CvType.CV_32FC1)
+        frameMaskTotal = Mat(height, width, CvType.CV_32FC1)
+        cameraFrameWhiteYellowMasked = Mat(height, width, CvType.CV_32FC3)
         perspTransformMat = Mat()
         roiPolygon = MatOfPoint(Point(135.0, 720.0), Point(582.0, 457.0), Point(701.0, 457.0), Point(1145.0, 720.0))
-        regression = SimpleRegression(true)
 
         srcPersp = Converters.vector_Point2f_to_Mat(
-                listOf(
-                        Point(190.0, 720.0),
-                        Point(582.0, 457.0),
-                        Point(701.0, 457.0),
-                        Point(1145.0, 720.0)
-                )
+            listOf(
+                Point(190.0, 720.0),
+                Point(582.0, 457.0),
+                Point(701.0, 457.0),
+                Point(1145.0, 720.0)
+            )
         )
         dstPersp = Converters.vector_Point2f_to_Mat(
-                listOf(
-                        Point(200.0, 720.0),
-                        Point(200.0, 0.0),
-                        Point(1000.0, 0.0),
-                        Point(1000.0, 720.0)
-                )
+            listOf(
+                Point(200.0, 720.0),
+                Point(200.0, 0.0),
+                Point(1000.0, 0.0),
+                Point(1000.0, 720.0)
+            )
         )
     }
 
@@ -151,16 +156,13 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
     }
 
     override fun onTouch(v: View, event: MotionEvent): Boolean {
-        val cols = cameraFrameRgba!!.cols()
-        val rows = cameraFrameRgba!!.rows()
+        val x = event.x.toInt()
+        if (x < imageWidth / 2) {
+            cameraMode = ++cameraMode % 4
+        } else {
+            extrapolationMode = ++extrapolationMode % 5
+        }
 
-        val xOffset = (mOpenCvCameraView!!.width - cols) / 2
-        val yOffset = (mOpenCvCameraView!!.height - rows) / 2
-
-        val x = event.x.toInt() - xOffset
-        val y = event.y.toInt() - yOffset
-
-        Log.i(TAG, "Touch image coordinates: ($x, $y)")
 
         return false // don't need subsequent touch events
     }
@@ -178,9 +180,9 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
 
         val roi = Mat.zeros(imageHeight, imageWidth, CvType.CV_8UC1)
         Imgproc.fillPoly(
-                roi,
-                listOf(roiPolygon),
-                Scalar(255.0)
+            roi,
+            listOf(roiPolygon),
+            Scalar(255.0)
         )
         val cameraFrameCropped = Mat.zeros(720, 1280, CvType.CV_8UC3)
         Core.bitwise_and(cameraFrameRgba, cameraFrameRgba, cameraFrameCropped, roi)
@@ -188,16 +190,16 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
         Imgproc.cvtColor(cameraFrameCropped, cameraFrameHls, Imgproc.COLOR_BGR2HLS, 3)
         //Imgproc.bilateralFilter(cameraFrameHls, cameraFrameCropped,9, 75.0, 75.0)
 
-        Core.inRange(cameraFrameHls, Scalar(0.0, 190.0, 0.0), Scalar(180.0, 255.0, 255.0), frameMaskWhite)
+        Core.inRange(cameraFrameHls, Scalar(0.0, 170.0, 0.0), Scalar(180.0, 255.0, 255.0), frameMaskWhite)
         Core.inRange(cameraFrameHls, Scalar(15.0, 38.0, 115.0), Scalar(35.0, 204.0, 255.0), frameMaskYellow)
         Core.bitwise_or(frameMaskWhite, frameMaskYellow, frameMaskTotal)
         cameraFrameWhiteYellowMasked!!.release()
         Core.bitwise_and(cameraFrameRgba, cameraFrameRgba, cameraFrameWhiteYellowMasked, frameMaskTotal)
 
-        Imgproc.cvtColor(cameraFrameWhiteYellowMasked, cameraFrameGrayScale, Imgproc.COLOR_RGB2GRAY, 4)
+        Imgproc.cvtColor(cameraFrameWhiteYellowMasked, cameraFrameGrayScale, Imgproc.COLOR_BGR2GRAY, 3)
         Imgproc.GaussianBlur(cameraFrameGrayScale, cameraFrameGrayScale, Size(5.0, 5.0), 0.0, 0.0)
         Imgproc.equalizeHist(cameraFrameGrayScale, cameraFrameGrayScale)
-        Imgproc.Canny(cameraFrameGrayScale, cameraFrameGrayScale, 50.0, 150.0)
+        //Imgproc.Canny(cameraFrameGrayScale, cameraFrameGrayScale, 50.0, 150.0)
 
 //        val roi = Mat.zeros(imageHeight, imageWidth, CvType.CV_8UC1)
 //        Imgproc.fillPoly(
@@ -210,62 +212,63 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
 //        val processedFrameCroppedIntoRoi = Mat.zeros(720, 1280, CvType.CV_8UC4)
 //        Core.bitwise_and(cameraFrameGrayScale, cameraFrameGrayScale, processedFrameCroppedIntoRoi, roi)
 
+        applyCanny()
         applyHoughTransform()
 
         separateLines(allLines)
 
-//        drawExtrapolatedLine(cameraFrameRgba, leftLines, true)
-//        drawExtrapolatedLine(cameraFrameRgba, rightLines, false)
-        drawExtrapolatedCurve(cameraFrameRgba, leftLines, true)
-        drawExtrapolatedCurve(cameraFrameRgba, rightLines, false)
+        chooseExtrapolationRenderingMode(cameraFrameRgba)
 
         drawRoi(cameraFrameRgba)
-        drawHoughLines(cameraFrameRgba)
         drawTextInfo(cameraFrameRgba)
 
         roi.release()
         //processedFrameCroppedIntoRoi.release()
         cameraFrameCropped.release()
-        return cameraFrameRgba!!
-    }
 
-    private fun drawTextInfo(cameraFrameRgba: Mat?) {
-        Imgproc.putText(
-                cameraFrameRgba,
-                "l: ${leftLines.size}, r: ${rightLines.size}",
-                Point(50.0, 50.0),
-                Core.FONT_HERSHEY_COMPLEX,
-                1.0,
-                Scalar(255.0, 0.0, 0.0)
-        )
+        return when (cameraMode) {
+            0 -> cameraFrameHls!!
+            1 -> cameraFrameWhiteYellowMasked!!
+            2 -> cameraFrameGrayScale!!
+            else -> cameraFrameRgba!!
+        }
     }
 
     private fun drawHoughLines(cameraFrameRgba: Mat?) {
         leftLines.forEach {
             Imgproc.line(
-                    cameraFrameRgba,
-                    Point(it.xStart, it.yStart),
-                    Point(it.xEnd, it.yEnd),
-                    Scalar(0.0, 0.0, 255.0),
-                    3,
-                    Imgproc.LINE_AA
+                cameraFrameRgba,
+                Point(it.xStart, it.yStart),
+                Point(it.xEnd, it.yEnd),
+                Scalar(0.0, 0.0, 255.0),
+                3,
+                Imgproc.LINE_AA
             )
         }
         rightLines.forEach {
             Imgproc.line(
-                    cameraFrameRgba,
-                    Point(it.xStart, it.yStart),
-                    Point(it.xEnd, it.yEnd),
-                    Scalar(0.0, 255.0, 100.0),
-                    3,
-                    Imgproc.LINE_AA
+                cameraFrameRgba,
+                Point(it.xStart, it.yStart),
+                Point(it.xEnd, it.yEnd),
+                Scalar(0.0, 255.0, 100.0),
+                3,
+                Imgproc.LINE_AA
             )
         }
     }
 
+    private fun applyCanny() {
+        val mean = Core.mean(cameraFrameGrayScale)
+        val sigma = 0.33
+        val lowerBound = max(150.0, (1.0 - sigma) * mean.`val`[0])
+        val upperBound = max(255.0, (1.0 + sigma) * mean.`val`[0])
+        Imgproc.Canny(cameraFrameGrayScale, cameraFrameGrayScale, lowerBound, upperBound)
+
+    }
+
     private fun applyHoughTransform() {
         val linesP = Mat()
-        Imgproc.HoughLinesP(cameraFrameGrayScale, linesP, 1.0, Math.PI / 180, 15, 3.0, 50.0)
+        Imgproc.HoughLinesP(cameraFrameGrayScale, linesP, 1.0, Math.PI / 180, 40, 10.0, 50.0)
 
         var lineCoords: DoubleArray?
         allLines.clear()
@@ -285,7 +288,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
             if (lines.size > 0) {
                 computeLinearExtrapolationFormula(lines)
                 if (leftCoefs.size >= 10) leftCoefs.pollLast()
-                leftCoefs.offerFirst(Pair(regression!!.slope, regression!!.intercept))
+                leftCoefs.offerFirst(Pair(regression.slope, regression.intercept))
             } else {
                 leftCoefs.pollLast()
             }
@@ -293,7 +296,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
             if (lines.size > 0) {
                 computeLinearExtrapolationFormula(lines)
                 if (rightCoefs.size >= 10) rightCoefs.pollLast()
-                rightCoefs.offerFirst(Pair(regression!!.slope, regression!!.intercept))
+                rightCoefs.offerFirst(Pair(regression.slope, regression.intercept))
             } else {
                 rightCoefs.pollLast()
             }
@@ -303,23 +306,23 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
             val avgSlope = leftCoefs.map { it.first }.sum() / leftCoefs.size
             val avgIntercept = leftCoefs.map { it.second }.sum() / leftCoefs.size
             Imgproc.line(
-                    cameraFrame,
-                    Point(roiPolygonPoints[0].x, avgSlope * roiPolygonPoints[0].x + avgIntercept),
-                    Point(imageMidpoint - 1.0, avgSlope * imageMidpoint + avgIntercept),
-                    Scalar(255.0, 0.0, 0.0),
-                    3,
-                    Imgproc.LINE_AA
+                cameraFrame,
+                Point(roiPolygonPoints[0].x, avgSlope * roiPolygonPoints[0].x + avgIntercept),
+                Point(imageMidpoint - 1.0, avgSlope * imageMidpoint + avgIntercept),
+                Scalar(255.0, 0.0, 0.0),
+                3,
+                Imgproc.LINE_AA
             )
         } else {
             val avgSlope = rightCoefs.map { it.first }.sum() / rightCoefs.size
             val avgIntercept = rightCoefs.map { it.second }.sum() / rightCoefs.size
             Imgproc.line(
-                    cameraFrame,
-                    Point(imageMidpoint + 1.0, avgSlope * (imageMidpoint + 1.0) + avgIntercept),
-                    Point(roiPolygonPoints[3].x, avgSlope * roiPolygonPoints[3].x + avgIntercept),
-                    Scalar(255.0, 0.0, 0.0),
-                    3,
-                    Imgproc.LINE_AA
+                cameraFrame,
+                Point(imageMidpoint + 1.0, avgSlope * (imageMidpoint + 1.0) + avgIntercept),
+                Point(roiPolygonPoints[3].x, avgSlope * roiPolygonPoints[3].x + avgIntercept),
+                Scalar(255.0, 0.0, 0.0),
+                3,
+                Imgproc.LINE_AA
             )
         }
     }
@@ -327,7 +330,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
     private fun drawExtrapolatedCurve(cameraFrame: Mat?, lines: MutableList<Line>, drawOnTheLeft: Boolean) {
         val roiPolygonPoints = roiPolygon!!.toArray()
         computePolynomialExtrapolationFormula(lines)
-        if(obs.toList().size == 0) return
+        if (obs.toList().size == 0) return
         val coeffs = polyFitter.fit(obs.toList())
         val polynomialFunc = PolynomialFunction(coeffs)
 
@@ -343,7 +346,8 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
             matOfPolyPoints.fromList(polyPoints)
 
             Imgproc.polylines(
-                    cameraFrame, listOf(matOfPolyPoints), false, Scalar(255.0, 0.0, 0.0), 3)
+                cameraFrame, listOf(matOfPolyPoints), false, Scalar(255.0, 165.0, 0.0), 3
+            )
         } else {
             for (x in imageMidpoint until roiPolygonPoints[3].x.toInt()) {
                 polyPoints.add(Point(x.toDouble(), polynomialFunc.value(x.toDouble())))
@@ -352,14 +356,58 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
             matOfPolyPoints.fromList(polyPoints)
 
             Imgproc.polylines(
-                    cameraFrame, listOf(matOfPolyPoints), false, Scalar(255.0, 0.0, 0.0), 3)
+                cameraFrame, listOf(matOfPolyPoints), false, Scalar(255.0, 165.0, 0.0), 3
+            )
         }
+    }
+
+    private fun chooseExtrapolationRenderingMode(cameraFrameRgba: Mat?) {
+        when (extrapolationMode) {
+            0 -> {
+                drawExtrapolatedLine(cameraFrameRgba, leftLines, true)
+                drawExtrapolatedLine(cameraFrameRgba, rightLines, false)
+            }
+            1 -> {
+                drawExtrapolatedCurve(cameraFrameRgba, leftLines, true)
+                drawExtrapolatedCurve(cameraFrameRgba, rightLines, false)
+            }
+
+            2 -> {
+                drawExtrapolatedLine(cameraFrameRgba, leftLines, true)
+                drawExtrapolatedLine(cameraFrameRgba, rightLines, false)
+                drawHoughLines(cameraFrameRgba)
+            }
+            3 -> {
+                drawExtrapolatedLine(cameraFrameRgba, leftLines, true)
+                drawExtrapolatedLine(cameraFrameRgba, rightLines, false)
+                drawExtrapolatedCurve(cameraFrameRgba, leftLines, true)
+                drawExtrapolatedCurve(cameraFrameRgba, rightLines, false)
+            }
+            else -> {
+                drawExtrapolatedLine(cameraFrameRgba, leftLines, true)
+                drawExtrapolatedLine(cameraFrameRgba, rightLines, false)
+                drawExtrapolatedCurve(cameraFrameRgba, leftLines, true)
+                drawExtrapolatedCurve(cameraFrameRgba, rightLines, false)
+                drawHoughLines(cameraFrameRgba)
+            }
+        }
+    }
+
+    private fun drawTextInfo(cameraFrameRgba: Mat?) {
+        Imgproc.putText(
+            cameraFrameRgba,
+            "l: ${leftLines.size}, r: ${rightLines.size}",
+            Point(50.0, 50.0),
+            Core.FONT_HERSHEY_COMPLEX,
+            1.0,
+            Scalar(255.0, 0.0, 0.0)
+        )
     }
 
     private fun drawRoi(cameraFrameRgba: Mat?) {
         Imgproc.polylines(
-                cameraFrameRgba, listOf(roiPolygon), false, Scalar(0.0, 255.0, 0.0),
-                1, Imgproc.LINE_AA
+            cameraFrameRgba, listOf(roiPolygon), false, Scalar(0.0, 255.0, 0.0),
+            1, Imgproc.LINE_AA
         )
     }
 
@@ -371,9 +419,9 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
         allLines.forEach {
             slope = it.getSlope()
             if (slope != null) {
-                if (slope!! > 0.1 && it.xStart < imageMidpoint && it.xEnd < imageMidpoint) {
+                if (slope!! > 0.2 && it.xStart < imageMidpoint && it.xEnd < imageMidpoint) {
                     leftLines.add(it)
-                } else if (slope!! < 0.1 && it.xStart > imageMidpoint && it.xEnd > imageMidpoint) {
+                } else if (slope!! < 0.2 && it.xStart > imageMidpoint && it.xEnd > imageMidpoint) {
                     rightLines.add(it)
                 }
             }
@@ -381,13 +429,13 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
     }
 
     private fun computeLinearExtrapolationFormula(lines: MutableList<Line>) {
-        regression!!.clear()
+        regression.clear()
         var slope: Double?
         lines.forEach {
             slope = it.getSlope()
             if (slope != null) {
-                regression!!.addData(it.xStart, it.yStart)
-                regression!!.addData(it.xEnd, it.yEnd)
+                regression.addData(it.xStart, it.yStart)
+                regression.addData(it.xEnd, it.yEnd)
             }
         }
     }
@@ -404,6 +452,34 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
         }
     }
 
+    private fun writeHistInfo(hist: IntArray) {
+        var id = 0
+        var v = 0
+        for (i in hist.indices) {
+            if (hist[i] > v) {
+                v = hist[i]
+                id = i
+            }
+        }
+        Imgproc.putText(
+            cameraFrameWhiteYellowMasked,
+            "Hist max at $id is $v",
+            Point(50.0, 50.0),
+            Core.FONT_HERSHEY_COMPLEX,
+            1.0,
+            Scalar(255.0, 0.0, 0.0)
+        )
+    }
+
+    private fun computeHistogram(combinedImage: Mat): IntArray {
+        val arr = IntArray(1280)
+        for (i in arr.indices) {
+            arr[i] = Core.countNonZero(combinedImage.col(i))
+        }
+
+        return arr
+    }
+
     private fun createAdvancedPipeline(cameraFrameRgba: Mat?): Mat {
         Imgproc.cvtColor(cameraFrameRgba, cameraFrameHls, Imgproc.COLOR_RGB2HLS, 3)
 
@@ -417,45 +493,17 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
 
         perspTransformMat = Imgproc.getPerspectiveTransform(srcPersp, dstPersp)
         Imgproc.warpPerspective(
-                cameraFrameWhiteYellowMasked,
-                cameraFrameWhiteYellowMasked,
-                perspTransformMat,
-                previewSize,
-                Imgproc.INTER_LINEAR
+            cameraFrameWhiteYellowMasked,
+            cameraFrameWhiteYellowMasked,
+            perspTransformMat,
+            previewSize,
+            Imgproc.INTER_LINEAR
         )
 
         val hist = computeHistogram(cameraFrameWhiteYellowMasked!!)
         writeHistInfo(hist)
 
         return cameraFrameWhiteYellowMasked!!
-    }
-
-    private fun writeHistInfo(hist: IntArray) {
-        var id = 0
-        var v = 0
-        for (i in hist.indices) {
-            if (hist[i] > v) {
-                v = hist[i]
-                id = i
-            }
-        }
-        Imgproc.putText(
-                cameraFrameWhiteYellowMasked,
-                "Hist max at $id is $v",
-                Point(50.0, 50.0),
-                Core.FONT_HERSHEY_COMPLEX,
-                1.0,
-                Scalar(255.0, 0.0, 0.0)
-        )
-    }
-
-    private fun computeHistogram(combinedImage: Mat): IntArray {
-        val arr = IntArray(1280)
-        for (i in arr.indices) {
-            arr[i] = Core.countNonZero(combinedImage.col(i))
-        }
-
-        return arr
     }
 
     private fun converScalarHsv2Rgba(hsvColor: Scalar?): Scalar {
@@ -465,6 +513,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
 
         return Scalar(pointMatRgba.get(0, 0))
     }
+
 
     companion object {
         private val TAG = "RecognitionActivity"
