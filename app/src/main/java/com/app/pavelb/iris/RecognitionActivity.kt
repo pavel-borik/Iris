@@ -31,6 +31,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
     private var roiPolygon: MatOfPoint? = null
     private var cameraFrameRgba: Mat? = null
     private var cameraFrameHls: Mat? = null
+    private var cameraFrameHsv: Mat? = null
     private var cameraFrameCropped: Mat? = null
     private var cameraFrameGrayScale: Mat? = null
     private var frameMaskWhite: Mat? = null
@@ -52,7 +53,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
     private val leftCoefs: Deque<Pair<Double, Double>> = ArrayDeque(10)
     private val rightCoefs: Deque<Pair<Double, Double>> = ArrayDeque(10)
 
-    private var cameraMode = 3
+    private var cameraMode = 4
     private var extrapolationMode = 4
 
     private val mLoaderCallback = object : BaseLoaderCallback(this) {
@@ -122,14 +123,15 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
 
     override fun onCameraViewStarted(width: Int, height: Int) {
         previewSize = Size(imageWidth.toDouble(), imageHeight.toDouble())
-        cameraFrameRgba = Mat(height, width, CvType.CV_32FC3)
-        cameraFrameHls = Mat(height, width, CvType.CV_32FC3)
-        cameraFrameCropped = Mat(height, width, CvType.CV_32FC3)
-        cameraFrameGrayScale = Mat(height, width, CvType.CV_32FC3)
-        frameMaskWhite = Mat(height, width, CvType.CV_32FC1)
-        frameMaskYellow = Mat(height, width, CvType.CV_32FC1)
-        frameMaskTotal = Mat(height, width, CvType.CV_32FC1)
-        cameraFrameWhiteYellowMasked = Mat(height, width, CvType.CV_32FC3)
+        cameraFrameRgba = Mat(height, width, CvType.CV_8UC3)
+        cameraFrameHls = Mat(height, width, CvType.CV_8UC3)
+        cameraFrameHsv = Mat(height, width, CvType.CV_8UC3)
+        cameraFrameCropped = Mat(height, width, CvType.CV_8UC3)
+        cameraFrameGrayScale = Mat(height, width, CvType.CV_8UC3)
+        frameMaskWhite = Mat(height, width, CvType.CV_8UC1)
+        frameMaskYellow = Mat(height, width, CvType.CV_8UC1)
+        frameMaskTotal = Mat(height, width, CvType.CV_8UC1)
+        cameraFrameWhiteYellowMasked = Mat(height, width, CvType.CV_8UC3)
         perspTransformMat = Mat()
         roiPolygon = MatOfPoint(Point(135.0, 720.0), Point(582.0, 457.0), Point(701.0, 457.0), Point(1145.0, 720.0))
 
@@ -158,7 +160,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
     override fun onTouch(v: View, event: MotionEvent): Boolean {
         val x = event.x.toInt()
         if (x < imageWidth / 2) {
-            cameraMode = ++cameraMode % 4
+            cameraMode = ++cameraMode % 5
         } else {
             extrapolationMode = ++extrapolationMode % 5
         }
@@ -187,13 +189,29 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
         val cameraFrameCropped = Mat.zeros(720, 1280, CvType.CV_8UC3)
         Core.bitwise_and(cameraFrameRgba, cameraFrameRgba, cameraFrameCropped, roi)
 
-        Imgproc.cvtColor(cameraFrameCropped, cameraFrameHls, Imgproc.COLOR_BGR2HLS, 3)
         //Imgproc.bilateralFilter(cameraFrameHls, cameraFrameCropped,9, 75.0, 75.0)
 
-        Core.inRange(cameraFrameHls, Scalar(0.0, 170.0, 0.0), Scalar(180.0, 255.0, 255.0), frameMaskWhite)
+        //HLS
+        Imgproc.cvtColor(cameraFrameCropped, cameraFrameHls, Imgproc.COLOR_RGB2HLS, 3)
+        Core.inRange(cameraFrameHls, Scalar(0.0, 180.0, 0.0), Scalar(180.0, 255.0, 255.0), frameMaskWhite)
         Core.inRange(cameraFrameHls, Scalar(15.0, 38.0, 115.0), Scalar(35.0, 204.0, 255.0), frameMaskYellow)
-        Core.bitwise_or(frameMaskWhite, frameMaskYellow, frameMaskTotal)
-        cameraFrameWhiteYellowMasked!!.release()
+        val hlsMask = Mat()
+        Core.bitwise_or(frameMaskWhite, frameMaskYellow, hlsMask)
+
+        //HSV
+        Imgproc.cvtColor(cameraFrameCropped, cameraFrameHsv, Imgproc.COLOR_RGB2HSV, 3)
+        Core.inRange(cameraFrameHsv, Scalar(18.0, 0.0, 180.0), Scalar(255.0, 80.0, 255.0), frameMaskWhite)
+        Core.inRange(cameraFrameHsv, Scalar(0.0, 100.0, 100.0), Scalar(50.0, 255.0, 255.0), frameMaskYellow)
+        val hsvMask = Mat()
+        Core.bitwise_or(frameMaskWhite, frameMaskYellow, hsvMask)
+
+        if(allLines.size < 10) {
+            Core.bitwise_or(hlsMask, hsvMask, frameMaskTotal)
+        } else {
+            Core.bitwise_and(hlsMask, hsvMask, frameMaskTotal)
+        }
+        hlsMask.release(); hsvMask.release(); cameraFrameWhiteYellowMasked!!.release()
+
         Core.bitwise_and(cameraFrameRgba, cameraFrameRgba, cameraFrameWhiteYellowMasked, frameMaskTotal)
 
         Imgproc.cvtColor(cameraFrameWhiteYellowMasked, cameraFrameGrayScale, Imgproc.COLOR_BGR2GRAY, 3)
@@ -228,8 +246,9 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
 
         return when (cameraMode) {
             0 -> cameraFrameHls!!
-            1 -> cameraFrameWhiteYellowMasked!!
-            2 -> cameraFrameGrayScale!!
+            1 -> cameraFrameHsv!!
+            2 -> cameraFrameWhiteYellowMasked!!
+            3 -> cameraFrameGrayScale!!
             else -> cameraFrameRgba!!
         }
     }
