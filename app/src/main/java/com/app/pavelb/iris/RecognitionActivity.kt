@@ -12,7 +12,7 @@ import android.view.View.OnTouchListener
 import android.app.Activity
 import android.util.Log
 import android.view.*
-import com.app.pavelb.iris.utils.Line
+import com.app.pavelb.iris.utils.*
 import org.apache.commons.math3.analysis.polynomials.PolynomialFunction
 import org.apache.commons.math3.stat.regression.SimpleRegression
 import org.opencv.core.*
@@ -25,8 +25,8 @@ import kotlin.math.max
 
 
 class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
-    private val imageWidth: Int = 1280
-    private val imageHeight: Int = 720
+    private val imageWidth: Int = IMAGE_WIDTH
+    private val imageHeight: Int = IMAGE_HEIGHT
     private var previewSize: Size? = null
     private var roiPolygon: MatOfPoint? = null
     private var cameraFrameRgba: Mat? = null
@@ -43,18 +43,18 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
     private var dstPersp: Mat? = null
     private var mOpenCvCameraView: CameraBridgeViewBase? = null
 
-    private val allLines = LinkedList<Line>()
+    private var allLines = LinkedList<Line>()
     private val leftLines = LinkedList<Line>()
     private val rightLines = LinkedList<Line>()
 
     private val regression = SimpleRegression(true)
     private val polyFitter = PolynomialCurveFitter.create(2)
     private val obs = WeightedObservedPoints()
-    private val leftCoefs: Deque<Pair<Double, Double>> = ArrayDeque(10)
-    private val rightCoefs: Deque<Pair<Double, Double>> = ArrayDeque(10)
+    private val leftCoefs: Deque<Pair<Double, Double>> = ArrayDeque(NUMBER_OF_FRAMES_BUFFER)
+    private val rightCoefs: Deque<Pair<Double, Double>> = ArrayDeque(NUMBER_OF_FRAMES_BUFFER)
 
-    private var cameraMode = 4
-    private var extrapolationMode = 4
+    private var cameraMode = 5
+    private var extrapolationMode = 5
 
     private val mLoaderCallback = object : BaseLoaderCallback(this) {
         override fun onManagerConnected(status: Int) {
@@ -133,7 +133,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
         frameMaskTotal = Mat(height, width, CvType.CV_8UC1)
         cameraFrameWhiteYellowMasked = Mat(height, width, CvType.CV_8UC3)
         perspTransformMat = Mat()
-        roiPolygon = MatOfPoint(Point(135.0, 720.0), Point(582.0, 457.0), Point(701.0, 457.0), Point(1145.0, 720.0))
+        roiPolygon = ROI_POLYGON
 
         srcPersp = Converters.vector_Point2f_to_Mat(
             listOf(
@@ -159,10 +159,10 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
 
     override fun onTouch(v: View, event: MotionEvent): Boolean {
         val x = event.x.toInt()
-        if (x < imageWidth / 2) {
-            cameraMode = ++cameraMode % 5
+        if (x < IMAGE_MIDPOINT) {
+            cameraMode = ++cameraMode % 6
         } else {
-            extrapolationMode = ++extrapolationMode % 5
+            extrapolationMode = ++extrapolationMode % 6
         }
 
 
@@ -180,77 +180,71 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
 
     private fun createSimplePipeline(cameraFrameRgba: Mat?): Mat {
 
-        val roi = Mat.zeros(imageHeight, imageWidth, CvType.CV_8UC1)
-        Imgproc.fillPoly(
-            roi,
-            listOf(roiPolygon),
-            Scalar(255.0)
-        )
-        val cameraFrameCropped = Mat.zeros(720, 1280, CvType.CV_8UC3)
-        Core.bitwise_and(cameraFrameRgba, cameraFrameRgba, cameraFrameCropped, roi)
+//        val roi = Mat.zeros(imageHeight, imageWidth, CvType.CV_8UC1)
+//        Imgproc.fillPoly(roi, listOf(roiPolygon), Scalar(255.0))
+//        val cameraFrameCropped = Mat.zeros(720, 1280, CvType.CV_8UC3)
+//        Core.bitwise_and(cameraFrameRgba, cameraFrameRgba, cameraFrameCropped, roi)
 
         //Imgproc.bilateralFilter(cameraFrameHls, cameraFrameCropped,9, 75.0, 75.0)
 
-        //HLS
-        Imgproc.cvtColor(cameraFrameCropped, cameraFrameHls, Imgproc.COLOR_RGB2HLS, 3)
-        Core.inRange(cameraFrameHls, Scalar(0.0, 180.0, 0.0), Scalar(180.0, 255.0, 255.0), frameMaskWhite)
-        Core.inRange(cameraFrameHls, Scalar(15.0, 38.0, 115.0), Scalar(35.0, 204.0, 255.0), frameMaskYellow)
-        val hlsMask = Mat()
-        Core.bitwise_or(frameMaskWhite, frameMaskYellow, hlsMask)
+        extractRoadLanesColors(cameraFrameRgba)
 
-        //HSV
-        Imgproc.cvtColor(cameraFrameCropped, cameraFrameHsv, Imgproc.COLOR_RGB2HSV, 3)
-        Core.inRange(cameraFrameHsv, Scalar(18.0, 0.0, 180.0), Scalar(255.0, 80.0, 255.0), frameMaskWhite)
-        Core.inRange(cameraFrameHsv, Scalar(0.0, 100.0, 100.0), Scalar(50.0, 255.0, 255.0), frameMaskYellow)
-        val hsvMask = Mat()
-        Core.bitwise_or(frameMaskWhite, frameMaskYellow, hsvMask)
-
-        if(allLines.size < 10) {
-            Core.bitwise_or(hlsMask, hsvMask, frameMaskTotal)
-        } else {
-            Core.bitwise_and(hlsMask, hsvMask, frameMaskTotal)
-        }
-        hlsMask.release(); hsvMask.release(); cameraFrameWhiteYellowMasked!!.release()
-
+        cameraFrameWhiteYellowMasked!!.release()
         Core.bitwise_and(cameraFrameRgba, cameraFrameRgba, cameraFrameWhiteYellowMasked, frameMaskTotal)
 
         Imgproc.cvtColor(cameraFrameWhiteYellowMasked, cameraFrameGrayScale, Imgproc.COLOR_BGR2GRAY, 3)
         Imgproc.GaussianBlur(cameraFrameGrayScale, cameraFrameGrayScale, Size(5.0, 5.0), 0.0, 0.0)
-        Imgproc.equalizeHist(cameraFrameGrayScale, cameraFrameGrayScale)
-        //Imgproc.Canny(cameraFrameGrayScale, cameraFrameGrayScale, 50.0, 150.0)
+        //Imgproc.equalizeHist(cameraFrameGrayScale, cameraFrameGrayScale)
 
-//        val roi = Mat.zeros(imageHeight, imageWidth, CvType.CV_8UC1)
-//        Imgproc.fillPoly(
-//            roi,
-//            listOf(roiPolygon),
-//            Scalar(255.0)
-//        )
-//        drawRoi(cameraFrameRgba)
-//
-//        val processedFrameCroppedIntoRoi = Mat.zeros(720, 1280, CvType.CV_8UC4)
-//        Core.bitwise_and(cameraFrameGrayScale, cameraFrameGrayScale, processedFrameCroppedIntoRoi, roi)
+        val roi = Mat.zeros(imageHeight, imageWidth, CvType.CV_8UC1)
+        Imgproc.fillPoly(roi, listOf(roiPolygon), Scalar(255.0))
+        cameraFrameCropped = Mat.zeros(imageHeight, imageWidth, CvType.CV_8UC3)
+        Core.bitwise_and(cameraFrameGrayScale, cameraFrameGrayScale, cameraFrameCropped, roi)
 
         applyCanny()
         applyHoughTransform()
-
         separateLines(allLines)
-
         chooseExtrapolationRenderingMode(cameraFrameRgba)
-
         drawRoi(cameraFrameRgba)
         drawTextInfo(cameraFrameRgba)
 
         roi.release()
         //processedFrameCroppedIntoRoi.release()
-        cameraFrameCropped.release()
+        //cameraFrameCropped.release()
 
         return when (cameraMode) {
             0 -> cameraFrameHls!!
             1 -> cameraFrameHsv!!
             2 -> cameraFrameWhiteYellowMasked!!
             3 -> cameraFrameGrayScale!!
+            4 -> cameraFrameCropped!!
             else -> cameraFrameRgba!!
         }
+    }
+
+    private fun extractRoadLanesColors(cameraFrameRgba: Mat?) {
+        //HLS
+        Imgproc.cvtColor(cameraFrameRgba, cameraFrameHls, Imgproc.COLOR_RGB2HLS, 3)
+        Core.inRange(cameraFrameHls, Scalar(0.0, 180.0, 0.0), Scalar(180.0, 255.0, 255.0), frameMaskWhite)
+        Core.inRange(cameraFrameHls, Scalar(15.0, 38.0, 115.0), Scalar(35.0, 204.0, 255.0), frameMaskYellow)
+        val hlsMask = Mat()
+        Core.bitwise_or(frameMaskWhite, frameMaskYellow, hlsMask)
+
+        //HSV
+        Imgproc.cvtColor(cameraFrameRgba, cameraFrameHsv, Imgproc.COLOR_RGB2HSV, 3)
+        Core.inRange(cameraFrameHsv, Scalar(18.0, 0.0, 180.0), Scalar(255.0, 80.0, 255.0), frameMaskWhite)
+        Core.inRange(cameraFrameHsv, Scalar(0.0, 100.0, 100.0), Scalar(50.0, 255.0, 255.0), frameMaskYellow)
+        val hsvMask = Mat()
+        Core.bitwise_or(frameMaskWhite, frameMaskYellow, hsvMask)
+
+        if (allLines.size < 10) {
+            Core.bitwise_or(hlsMask, hsvMask, frameMaskTotal)
+        } else {
+            Core.bitwise_and(hlsMask, hsvMask, frameMaskTotal)
+        }
+
+        hlsMask.release()
+        hsvMask.release()
     }
 
     private fun drawHoughLines(cameraFrameRgba: Mat?) {
@@ -277,17 +271,17 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
     }
 
     private fun applyCanny() {
-        val mean = Core.mean(cameraFrameGrayScale)
+        val mean = Core.mean(cameraFrameCropped)
         val sigma = 0.33
         val lowerBound = max(150.0, (1.0 - sigma) * mean.`val`[0])
         val upperBound = max(255.0, (1.0 + sigma) * mean.`val`[0])
-        Imgproc.Canny(cameraFrameGrayScale, cameraFrameGrayScale, lowerBound, upperBound)
+        Imgproc.Canny(cameraFrameCropped, cameraFrameCropped, lowerBound, upperBound)
 
     }
 
     private fun applyHoughTransform() {
         val linesP = Mat()
-        Imgproc.HoughLinesP(cameraFrameGrayScale, linesP, 1.0, Math.PI / 180, 40, 10.0, 50.0)
+        Imgproc.HoughLinesP(cameraFrameCropped, linesP, 1.0, Math.PI / 180, 40, 10.0, 50.0)
 
         var lineCoords: DoubleArray?
         allLines.clear()
@@ -297,6 +291,9 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
                 allLines.add(Line(lineCoords[0], lineCoords[1], lineCoords[2], lineCoords[3]))
             }
         }
+
+        val newLines = allLines.filter { it.getSlope() != null }.toCollection(LinkedList())
+        allLines = newLines
 
         linesP.release()
     }
@@ -320,7 +317,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
                 rightCoefs.pollLast()
             }
         }
-        val imageMidpoint = imageWidth / 2
+        val imageMidpoint = IMAGE_MIDPOINT
         if (drawOnTheLeft) {
             val avgSlope = leftCoefs.map { it.first }.sum() / leftCoefs.size
             val avgIntercept = leftCoefs.map { it.second }.sum() / leftCoefs.size
@@ -353,7 +350,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
         val coeffs = polyFitter.fit(obs.toList())
         val polynomialFunc = PolynomialFunction(coeffs)
 
-        val imageMidpoint = imageWidth / 2
+        val imageMidpoint = IMAGE_MIDPOINT
         val polyPoints = ArrayList<Point>()
 
 
@@ -402,6 +399,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
                 drawExtrapolatedCurve(cameraFrameRgba, leftLines, true)
                 drawExtrapolatedCurve(cameraFrameRgba, rightLines, false)
             }
+            4 -> {}
             else -> {
                 drawExtrapolatedLine(cameraFrameRgba, leftLines, true)
                 drawExtrapolatedLine(cameraFrameRgba, rightLines, false)
@@ -434,13 +432,13 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
         leftLines.clear()
         rightLines.clear()
         var slope: Double?
-        val imageMidpoint = imageWidth / 2
+        val imageMidpoint = IMAGE_MIDPOINT
         allLines.forEach {
             slope = it.getSlope()
             if (slope != null) {
-                if (slope!! > 0.2 && it.xStart < imageMidpoint && it.xEnd < imageMidpoint) {
+                if (it.xStart < imageMidpoint && it.xEnd < imageMidpoint) {
                     leftLines.add(it)
-                } else if (slope!! < 0.2 && it.xStart > imageMidpoint && it.xEnd > imageMidpoint) {
+                } else if (it.xStart > imageMidpoint && it.xEnd > imageMidpoint) {
                     rightLines.add(it)
                 }
             }
