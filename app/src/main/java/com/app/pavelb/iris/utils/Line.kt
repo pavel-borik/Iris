@@ -10,11 +10,11 @@ class Line(
     val yEnd: Double
 ) {
     fun getSlope(): Double? {
-        if(Precision.equalsWithRelativeTolerance(yStart, yEnd, 0.001)) {
+        if(Precision.equalsWithRelativeTolerance(xStart, xEnd, 0.001)) {
             return null
         }
-        val slope = (xEnd - xStart) / (yStart - yEnd)
-        if (FastMath.abs(slope) < 0.1) return null
+        val slope = (yEnd - yStart) / (xStart - xEnd)
+        if (FastMath.abs(slope) < MIN_ALLOWED_LANE_SLOPE) return null
 
         return slope
     }
