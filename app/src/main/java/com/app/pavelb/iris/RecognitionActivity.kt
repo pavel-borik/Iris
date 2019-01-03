@@ -187,30 +187,20 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
 
         //Imgproc.bilateralFilter(cameraFrameHls, cameraFrameCropped,9, 75.0, 75.0)
 
-        extractRoadLanesColors(cameraFrameRgba)
-
-        cameraFrameWhiteYellowMasked!!.release()
-        Core.bitwise_and(cameraFrameRgba, cameraFrameRgba, cameraFrameWhiteYellowMasked, frameMaskTotal)
-
-        Imgproc.cvtColor(cameraFrameWhiteYellowMasked, cameraFrameGrayScale, Imgproc.COLOR_BGR2GRAY, 3)
-        Imgproc.GaussianBlur(cameraFrameGrayScale, cameraFrameGrayScale, Size(5.0, 5.0), 0.0, 0.0)
+        extractRoadLanesColors()
+        convertToGrayscale()
         //Imgproc.equalizeHist(cameraFrameGrayScale, cameraFrameGrayScale)
-
-        val roi = Mat.zeros(ImageConstants.IMAGE_HEIGHT, ImageConstants.IMAGE_WIDTH, CvType.CV_8UC1)
-        Imgproc.fillPoly(roi, listOf(roiPolygon), Scalar(255.0))
-        cameraFrameCropped = Mat.zeros(ImageConstants.IMAGE_HEIGHT, ImageConstants.IMAGE_WIDTH, CvType.CV_8UC3)
-        Core.bitwise_and(cameraFrameGrayScale, cameraFrameGrayScale, cameraFrameCropped, roi)
-
+        cropImageOutsideRoi()
         applyCanny()
         applyHoughTransform()
         separateLines(allLines)
-        chooseExtrapolationRenderingMode(cameraFrameRgba)
-        drawRoi(cameraFrameRgba)
-        drawTextInfo(cameraFrameRgba)
+        chooseExtrapolationRenderingMode()
+        drawRoi()
+        drawTextInfo()
+        freeResources()
 
-        roi.release()
+        //roi.release()
         //processedFrameCroppedIntoRoi.release()
-        //cameraFrameCropped.release()
 
         return when (cameraMode) {
             0 -> cameraFrameHls!!
@@ -222,7 +212,25 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
         }
     }
 
-    private fun extractRoadLanesColors(cameraFrameRgba: Mat?) {
+    private fun freeResources() {
+        cameraFrameWhiteYellowMasked!!.release()
+        cameraFrameCropped!!.release()
+    }
+
+    private fun cropImageOutsideRoi() {
+        val roi = Mat.zeros(ImageConstants.IMAGE_HEIGHT, ImageConstants.IMAGE_WIDTH, CvType.CV_8UC1)
+        Imgproc.fillPoly(roi, listOf(roiPolygon), Scalar(255.0))
+        cameraFrameCropped = Mat.zeros(ImageConstants.IMAGE_HEIGHT, ImageConstants.IMAGE_WIDTH, CvType.CV_8UC3)
+        Core.bitwise_and(cameraFrameGrayScale, cameraFrameGrayScale, cameraFrameCropped, roi)
+        roi.release()
+    }
+
+    private fun convertToGrayscale() {
+        Imgproc.cvtColor(cameraFrameWhiteYellowMasked, cameraFrameGrayScale, Imgproc.COLOR_BGR2GRAY, 3)
+        Imgproc.GaussianBlur(cameraFrameGrayScale, cameraFrameGrayScale, Size(5.0, 5.0), 0.0, 0.0)
+    }
+
+    private fun extractRoadLanesColors() {
         //HLS
         Imgproc.cvtColor(cameraFrameRgba, cameraFrameHls, Imgproc.COLOR_RGB2HLS, 3)
         Core.inRange(cameraFrameHls, Scalar(0.0, 180.0, 0.0), Scalar(180.0, 255.0, 255.0), frameMaskWhite)
@@ -244,11 +252,14 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
             Core.bitwise_and(hlsMask, hsvMask, frameMaskTotal)
         }
 
+        cameraFrameWhiteYellowMasked = Mat.zeros(ImageConstants.IMAGE_HEIGHT, ImageConstants.IMAGE_WIDTH, CvType.CV_8UC1)
+        Core.bitwise_and(cameraFrameRgba, cameraFrameRgba, cameraFrameWhiteYellowMasked, frameMaskTotal)
+
         hlsMask.release()
         hsvMask.release()
     }
 
-    private fun drawHoughLines(cameraFrameRgba: Mat?) {
+    private fun drawHoughLines() {
         leftLines.forEach {
             Imgproc.line(
                 cameraFrameRgba,
@@ -378,7 +389,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
         }
     }
 
-    private fun chooseExtrapolationRenderingMode(cameraFrameRgba: Mat?) {
+    private fun chooseExtrapolationRenderingMode() {
         when (extrapolationMode) {
             0 -> {
                 drawExtrapolatedLine(cameraFrameRgba, leftLines, true)
@@ -392,7 +403,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
             2 -> {
                 drawExtrapolatedLine(cameraFrameRgba, leftLines, true)
                 drawExtrapolatedLine(cameraFrameRgba, rightLines, false)
-                drawHoughLines(cameraFrameRgba)
+                drawHoughLines()
             }
             3 -> {
                 drawExtrapolatedLine(cameraFrameRgba, leftLines, true)
@@ -406,12 +417,12 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
                 drawExtrapolatedLine(cameraFrameRgba, rightLines, false)
                 drawExtrapolatedCurve(cameraFrameRgba, leftLines, true)
                 drawExtrapolatedCurve(cameraFrameRgba, rightLines, false)
-                drawHoughLines(cameraFrameRgba)
+                drawHoughLines()
             }
         }
     }
 
-    private fun drawTextInfo(cameraFrameRgba: Mat?) {
+    private fun drawTextInfo() {
         Imgproc.putText(
             cameraFrameRgba,
             "l: ${leftLines.size}, r: ${rightLines.size}",
@@ -422,7 +433,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
         )
     }
 
-    private fun drawRoi(cameraFrameRgba: Mat?) {
+    private fun drawRoi() {
         Imgproc.polylines(
             cameraFrameRgba, listOf(roiPolygon), false, Scalar(0.0, 255.0, 0.0),
             1, Imgproc.LINE_AA
