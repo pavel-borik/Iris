@@ -12,7 +12,8 @@ import android.view.View.OnTouchListener
 import android.app.Activity
 import android.util.Log
 import android.view.*
-import com.app.pavelb.iris.utils.*
+import com.app.pavelb.iris.utils.ImageConstants
+import com.app.pavelb.iris.utils.Line
 import org.apache.commons.math3.analysis.polynomials.PolynomialFunction
 import org.apache.commons.math3.stat.regression.SimpleRegression
 import org.opencv.core.*
@@ -25,8 +26,6 @@ import kotlin.math.max
 
 
 class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
-    private val imageWidth: Int = IMAGE_WIDTH
-    private val imageHeight: Int = IMAGE_HEIGHT
     private var previewSize: Size? = null
     private var roiPolygon: MatOfPoint? = null
     private var cameraFrameRgba: Mat? = null
@@ -50,8 +49,8 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
     private val regression = SimpleRegression(true)
     private val polyFitter = PolynomialCurveFitter.create(2)
     private val obs = WeightedObservedPoints()
-    private val leftCoefs: Deque<Pair<Double, Double>> = ArrayDeque(NUMBER_OF_FRAMES_BUFFER)
-    private val rightCoefs: Deque<Pair<Double, Double>> = ArrayDeque(NUMBER_OF_FRAMES_BUFFER)
+    private val leftCoefs: Deque<Pair<Double, Double>> = ArrayDeque(ImageConstants.NUMBER_OF_FRAMES_BUFFER)
+    private val rightCoefs: Deque<Pair<Double, Double>> = ArrayDeque(ImageConstants.NUMBER_OF_FRAMES_BUFFER)
 
     private var cameraMode = 5
     private var extrapolationMode = 5
@@ -63,7 +62,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
                     Log.i(TAG, "OpenCV loaded successfully")
                     mOpenCvCameraView!!.enableView()
                     mOpenCvCameraView!!.setOnTouchListener(this@RecognitionActivity)
-                    mOpenCvCameraView!!.setMaxFrameSize(imageWidth, imageHeight)
+                    mOpenCvCameraView!!.setMaxFrameSize(ImageConstants.IMAGE_WIDTH, ImageConstants.IMAGE_HEIGHT)
                 }
                 else -> {
                     super.onManagerConnected(status)
@@ -122,7 +121,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
     }
 
     override fun onCameraViewStarted(width: Int, height: Int) {
-        previewSize = Size(imageWidth.toDouble(), imageHeight.toDouble())
+        previewSize = Size(ImageConstants.IMAGE_WIDTH.toDouble(), ImageConstants.IMAGE_HEIGHT.toDouble())
         cameraFrameRgba = Mat(height, width, CvType.CV_8UC3)
         cameraFrameHls = Mat(height, width, CvType.CV_8UC3)
         cameraFrameHsv = Mat(height, width, CvType.CV_8UC3)
@@ -133,7 +132,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
         frameMaskTotal = Mat(height, width, CvType.CV_8UC1)
         cameraFrameWhiteYellowMasked = Mat(height, width, CvType.CV_8UC3)
         perspTransformMat = Mat()
-        roiPolygon = ROI_POLYGON
+        roiPolygon = ImageConstants.ROI_POLYGON
 
         srcPersp = Converters.vector_Point2f_to_Mat(
             listOf(
@@ -159,7 +158,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
 
     override fun onTouch(v: View, event: MotionEvent): Boolean {
         val x = event.x.toInt()
-        if (x < IMAGE_MIDPOINT) {
+        if (x < ImageConstants.IMAGE_MIDPOINT) {
             cameraMode = ++cameraMode % 6
         } else {
             extrapolationMode = ++extrapolationMode % 6
@@ -180,7 +179,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
 
     private fun createSimplePipeline(cameraFrameRgba: Mat?): Mat {
 
-//        val roi = Mat.zeros(imageHeight, imageWidth, CvType.CV_8UC1)
+//        val roi = Mat.zeros(ImageConstants.IMAGE_HEIGHT, ImageConstants.IMAGE_WIDTH, CvType.CV_8UC1)
 //        Imgproc.fillPoly(roi, listOf(roiPolygon), Scalar(255.0))
 //        val cameraFrameCropped = Mat.zeros(720, 1280, CvType.CV_8UC3)
 //        Core.bitwise_and(cameraFrameRgba, cameraFrameRgba, cameraFrameCropped, roi)
@@ -196,9 +195,9 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
         Imgproc.GaussianBlur(cameraFrameGrayScale, cameraFrameGrayScale, Size(5.0, 5.0), 0.0, 0.0)
         //Imgproc.equalizeHist(cameraFrameGrayScale, cameraFrameGrayScale)
 
-        val roi = Mat.zeros(imageHeight, imageWidth, CvType.CV_8UC1)
+        val roi = Mat.zeros(ImageConstants.IMAGE_HEIGHT, ImageConstants.IMAGE_WIDTH, CvType.CV_8UC1)
         Imgproc.fillPoly(roi, listOf(roiPolygon), Scalar(255.0))
-        cameraFrameCropped = Mat.zeros(imageHeight, imageWidth, CvType.CV_8UC3)
+        cameraFrameCropped = Mat.zeros(ImageConstants.IMAGE_HEIGHT, ImageConstants.IMAGE_WIDTH, CvType.CV_8UC3)
         Core.bitwise_and(cameraFrameGrayScale, cameraFrameGrayScale, cameraFrameCropped, roi)
 
         applyCanny()
@@ -317,7 +316,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
                 rightCoefs.pollLast()
             }
         }
-        val imageMidpoint = IMAGE_MIDPOINT
+        val imageMidpoint = ImageConstants.IMAGE_MIDPOINT
         if (drawOnTheLeft) {
             val avgSlope = leftCoefs.map { it.first }.sum() / leftCoefs.size
             val avgIntercept = leftCoefs.map { it.second }.sum() / leftCoefs.size
@@ -350,7 +349,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
         val coeffs = polyFitter.fit(obs.toList())
         val polynomialFunc = PolynomialFunction(coeffs)
 
-        val imageMidpoint = IMAGE_MIDPOINT
+        val imageMidpoint = ImageConstants.IMAGE_MIDPOINT
         val polyPoints = ArrayList<Point>()
 
 
@@ -432,7 +431,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
         leftLines.clear()
         rightLines.clear()
         var slope: Double?
-        val imageMidpoint = IMAGE_MIDPOINT
+        val imageMidpoint = ImageConstants.IMAGE_MIDPOINT
         allLines.forEach {
             slope = it.getSlope()
             if (slope != null) {

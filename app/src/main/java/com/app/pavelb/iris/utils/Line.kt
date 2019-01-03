@@ -14,7 +14,7 @@ class Line(
             return null
         }
         val slope = (yEnd - yStart) / (xStart - xEnd)
-        if (FastMath.abs(slope) < MIN_ALLOWED_LANE_SLOPE) return null
+        if (FastMath.abs(slope) < ImageConstants.MIN_ALLOWED_LANE_SLOPE) return null
 
         return slope
     }
