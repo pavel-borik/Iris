@@ -54,6 +54,7 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
 
     private var cameraMode = 5
     private var extrapolationMode = 5
+    private var maskFrameCounter = 0
 
     private val mLoaderCallback = object : BaseLoaderCallback(this) {
         override fun onManagerConnected(status: Int) {
@@ -236,8 +237,9 @@ class RecognitionActivity : Activity(), OnTouchListener, CvCameraViewListener2 {
         val hsvMask = Mat()
         Core.bitwise_or(frameMaskWhite, frameMaskYellow, hsvMask)
 
-        if (allLines.size < 10) {
+        if (allLines.size < 10 || maskFrameCounter != 0) {
             Core.bitwise_or(hlsMask, hsvMask, frameMaskTotal)
+            if(++maskFrameCounter > 24) maskFrameCounter = 0
         } else {
             Core.bitwise_and(hlsMask, hsvMask, frameMaskTotal)
         }
